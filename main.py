@@ -6,7 +6,6 @@ from analyzer.static_analyzer import analyze_file
 from analyzer.llm_analyzer import analyze_with_llm
 from analyzer.hybrid_analyzer import run_hybrid_analysis
 
-
 def save_report(report, output_file):
     with open(output_file, "w", encoding="utf-8") as file:
         json.dump(
