@@ -1,193 +1,223 @@
 import json
+import os
+import shutil
 import subprocess
+import sys
+from pathlib import Path
+
+from radon.complexity import cc_visit
+from radon.complexity import cc_rank
 
 from analyzer.ast_analyzer import analyze_ast
 
 
 # ============================================================
-# RUFF ANALYSIS
+# COMMAND EXECUTION
+# ============================================================
+
+def resolve_tool_path(tool_name):
+    """
+    Find the executable for tool_name.
+    Searches:
+    1. System PATH
+    2. sys.executable directory (e.g. venv/bin or venv/Scripts)
+    3. Project venv directory
+    """
+    # 1. System PATH
+    found = shutil.which(tool_name)
+    if found:
+        return found
+
+    # 2. Same directory as current Python interpreter (e.g. venv/bin)
+    py_dir = Path(sys.executable).parent
+    candidate = py_dir / tool_name
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+
+    # 3. Project venv directory relative to this file
+    workspace_venv = Path(__file__).resolve().parent.parent / "venv" / "bin" / tool_name
+    if workspace_venv.is_file() and os.access(workspace_venv, os.X_OK):
+        return str(workspace_venv)
+
+    return None
+
+
+def run_command(command):
+    """Run an external analysis tool with clear error reporting."""
+    tool_name = command[0]
+    tool_path = resolve_tool_path(tool_name)
+
+    if not tool_path:
+        raise RuntimeError(
+            f"Required static analysis tool '{tool_name}' was not found. "
+            f"Please verify it is installed in your Python environment or PATH."
+        )
+
+    resolved_command = [tool_path] + list(command[1:])
+
+    try:
+        result = subprocess.run(
+            resolved_command,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        return result
+
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"Required static analysis tool could not be executed: '{tool_name}'"
+        ) from error
+
+
+# ============================================================
+# RUFF
 # ============================================================
 
 def run_ruff(file_path):
-    """
-    Run Ruff on the given Python file.
+    """Run Ruff and convert its output to project findings."""
 
-    Ruff is used for:
-    - code quality
-    - style problems
-    - unused imports
-    - unused variables
-    - simplification suggestions
-    """
+    result = run_command([
+        "ruff",
+        "check",
+        file_path,
+        "--output-format",
+        "json",
+        "--select",
+        "F,SIM"
+    ])
 
-    result = subprocess.run(
-        [
-            "ruff",
-            "check",
-            file_path,
-            "--output-format",
-            "json"
-        ],
-        capture_output=True,
-        text=True
-    )
-
-    if not result.stdout:
+    if not result.stdout.strip():
         return []
 
     try:
-        raw_results = json.loads(result.stdout)
+        data = json.loads(result.stdout)
+
     except json.JSONDecodeError:
         return []
 
     findings = []
 
-    for issue in raw_results:
+    for issue in data:
 
-        finding = {
+        location = issue.get(
+            "location",
+            {}
+        )
+
+        findings.append({
             "tool": "ruff",
             "category": "quality_style",
-            "code": issue.get("code"),
-            "line": issue.get(
-                "location",
-                {}
-            ).get("row"),
+            "code": issue.get(
+                "code",
+                "UNKNOWN"
+            ),
+            "line": location.get(
+                "row",
+                1
+            ),
             "severity": "warning",
-            "message": issue.get("message")
-        }
-
-        findings.append(finding)
+            "message": issue.get(
+                "message",
+                "Ruff finding"
+            )
+        })
 
     return findings
 
 
 # ============================================================
-# BANDIT ANALYSIS
+# BANDIT
 # ============================================================
 
 def run_bandit(file_path):
-    """
-    Run Bandit security analysis.
+    """Run Bandit security analysis."""
 
-    Bandit detects security-related problems such as:
-    - hardcoded passwords
-    - insecure function usage
-    - dangerous subprocess usage
-    - weak cryptographic practices
-    """
+    result = run_command([
+        "bandit",
+        "-f",
+        "json",
+        "-q",
+        file_path
+    ])
 
-    result = subprocess.run(
-        [
-            "bandit",
-            "-f",
-            "json",
-            file_path
-        ],
-        capture_output=True,
-        text=True
-    )
-
-    if not result.stdout:
+    if not result.stdout.strip():
         return []
 
     try:
-        raw_data = json.loads(result.stdout)
+        data = json.loads(result.stdout)
+
     except json.JSONDecodeError:
         return []
 
-    raw_results = raw_data.get("results", [])
-
     findings = []
 
-    for issue in raw_results:
+    for issue in data.get(
+        "results",
+        []
+    ):
 
-        severity = issue.get(
-            "issue_severity",
-            "LOW"
-        ).lower()
-
-        finding = {
+        findings.append({
             "tool": "bandit",
             "category": "security",
-            "code": issue.get("test_id"),
-            "line": issue.get("line_number"),
-            "severity": severity,
-            "message": issue.get("issue_text")
-        }
-
-        findings.append(finding)
+            "code": issue.get(
+                "test_id",
+                "UNKNOWN"
+            ),
+            "line": issue.get(
+                "line_number",
+                1
+            ),
+            "severity": issue.get(
+                "issue_severity",
+                "LOW"
+            ).lower(),
+            "message": issue.get(
+                "issue_text",
+                "Bandit finding"
+            )
+        })
 
     return findings
 
 
 # ============================================================
-# RADON COMPLEXITY METRICS
+# RADON
 # ============================================================
 
 def run_radon(file_path):
-    """
-    Run Radon cyclomatic complexity analysis.
+    """Calculate cyclomatic-complexity metrics."""
 
-    IMPORTANT:
-    Radon results are treated primarily as METRICS.
+    with open(
+        file_path,
+        "r",
+        encoding="utf-8"
+    ) as file:
+        code = file.read()
 
-    A function with low complexity is not automatically
-    considered a code-quality problem.
-
-    Only functions above the complexity threshold will later
-    be converted into findings.
-    """
-
-    result = subprocess.run(
-        [
-            "radon",
-            "cc",
-            file_path,
-            "-j"
-        ],
-        capture_output=True,
-        text=True
-    )
-
-    if not result.stdout:
-        return []
-
-    try:
-        raw_data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return []
+    blocks = cc_visit(code)
 
     metrics = []
 
-    for filename, blocks in raw_data.items():
+    for block in blocks:
 
-        for block in blocks:
-
-            metric = {
-                "function": block.get("name"),
-                "line": block.get("lineno"),
-                "complexity": block.get("complexity"),
-                "rank": block.get("rank")
-            }
-
-            metrics.append(metric)
+        metrics.append({
+            "function": block.name,
+            "line": block.lineno,
+            "complexity": block.complexity,
+            "rank": cc_rank(
+                block.complexity
+            )
+        })
 
     return metrics
 
 
-# ============================================================
-# COMPLEXITY FINDINGS
-# ============================================================
-
 def complexity_severity(complexity):
     """
-    Convert cyclomatic complexity into severity.
+    Convert complexity score to finding severity.
 
-    Complexity:
-        1-5   -> acceptable
-        6-10  -> low
-        11-20 -> medium
-        21+   -> high
+    Low complexity is kept only as a metric.
     """
 
     if complexity <= 5:
@@ -202,81 +232,49 @@ def complexity_severity(complexity):
     return "high"
 
 
-def create_complexity_findings(complexity_metrics):
-    """
-    Convert only sufficiently complex functions into findings.
-
-    Complexity <= 5 is stored only as a metric.
-    """
+def create_complexity_findings(metrics):
+    """Create findings only for meaningful complexity."""
 
     findings = []
 
-    for metric in complexity_metrics:
-
-        complexity = metric.get(
-            "complexity",
-            0
-        )
+    for metric in metrics:
 
         severity = complexity_severity(
-            complexity
+            metric["complexity"]
         )
 
-        # Acceptable complexity -> metric only
         if severity is None:
             continue
 
-        finding = {
+        findings.append({
             "tool": "radon",
             "category": "complexity",
-            "code": "CC",
-            "line": metric.get("line"),
+            "code": "RADON-CC",
+            "line": metric["line"],
             "severity": severity,
             "message": (
-                f"{metric.get('function')} has cyclomatic "
-                f"complexity {complexity} "
-                f"(Rank {metric.get('rank')})"
+                f"Function '{metric['function']}' "
+                f"has cyclomatic complexity "
+                f"{metric['complexity']} "
+                f"(rank {metric['rank']})."
             )
-        }
-
-        findings.append(finding)
+        })
 
     return findings
 
 
 # ============================================================
-# STATIC ANALYSIS ENGINE
+# COMPLETE STATIC ANALYSIS
 # ============================================================
 
 def analyze_file(file_path):
-    """
-    Main static-analysis pipeline.
-
-    Pipeline:
-        Python file
-            |
-            +-- AST
-            |
-            +-- Ruff
-            |
-            +-- Bandit
-            |
-            +-- Radon metrics
-                    |
-                    +-- high-enough complexity -> finding
-    """
-
-    # --------------------------------------------------------
-    # AST STRUCTURAL ANALYSIS
-    # --------------------------------------------------------
+    """Run the complete static-analysis pipeline."""
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Source file not found: {file_path}")
 
     ast_analysis = analyze_ast(
         file_path
     )
-
-    # --------------------------------------------------------
-    # STATIC ANALYSIS TOOLS
-    # --------------------------------------------------------
 
     ruff_findings = run_ruff(
         file_path
@@ -290,33 +288,19 @@ def analyze_file(file_path):
         file_path
     )
 
-    complexity_findings = create_complexity_findings(
-        complexity_metrics
+    complexity_findings = (
+        create_complexity_findings(
+            complexity_metrics
+        )
     )
 
-    # --------------------------------------------------------
-    # COMBINE FINDINGS
-    # --------------------------------------------------------
-
-    findings = []
-
-    findings.extend(
+    findings = (
         ruff_findings
+        + bandit_findings
+        + complexity_findings
     )
 
-    findings.extend(
-        bandit_findings
-    )
-
-    findings.extend(
-        complexity_findings
-    )
-
-    # --------------------------------------------------------
-    # FINAL STATIC REPORT
-    # --------------------------------------------------------
-
-    report = {
+    return {
         "file": file_path,
         "analysis_mode": "static",
         "total_issues": len(findings),
@@ -330,136 +314,17 @@ def analyze_file(file_path):
         "findings": findings
     }
 
-    return report
-
-
-# ============================================================
-# TERMINAL REPORT
-# ============================================================
-
-def print_report(report):
-
-    print("\n" + "=" * 60)
-
-    print(
-        "STATIC CODE QUALITY ANALYSIS"
-    )
-
-    print("=" * 60)
-
-    print(
-        f"\nFile: {report['file']}"
-    )
-
-    print(
-        f"Total findings: {report['total_issues']}"
-    )
-
-    # --------------------------------------------------------
-    # FINDINGS
-    # --------------------------------------------------------
-
-    print("\nFINDINGS")
-    print("-" * 60)
-
-    if not report["findings"]:
-        print(
-            "No static-analysis issues found."
-        )
-
-    else:
-
-        for finding in report["findings"]:
-
-            print(
-                f"[{finding['tool'].upper()}] "
-                f"{finding['code']} "
-                f"| Line {finding['line']} "
-                f"| Severity: {finding['severity']}"
-            )
-
-            print(
-                f"  {finding['message']}"
-            )
-
-    # --------------------------------------------------------
-    # COMPLEXITY METRICS
-    # --------------------------------------------------------
-
-    print("\nCOMPLEXITY METRICS")
-    print("-" * 60)
-
-    complexity_metrics = report.get(
-        "metrics",
-        {}
-    ).get(
-        "complexity",
-        []
-    )
-
-    if not complexity_metrics:
-
-        print(
-            "No functions found."
-        )
-
-    else:
-
-        for metric in complexity_metrics:
-
-            print(
-                f"{metric['function']} "
-                f"| Line {metric['line']} "
-                f"| CC: {metric['complexity']} "
-                f"| Rank: {metric['rank']}"
-            )
-
-    print("\n" + "=" * 60)
-
-
-# ============================================================
-# SAVE JSON REPORT
-# ============================================================
-
-def save_json_report(
-    report,
-    output_file="report.json"
-):
-
-    with open(
-        output_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            report,
-            file,
-            indent=4,
-            ensure_ascii=False
-        )
-
-    print(
-        f"\nStatic report saved to: {output_file}"
-    )
-
-
-# ============================================================
-# DIRECT EXECUTION
-# ============================================================
 
 if __name__ == "__main__":
 
-    file_path = "samples/bad_code.py"
-
     report = analyze_file(
-        file_path
+        "samples/bad_code.py"
     )
 
-    print_report(
-        report
-    )
-
-    save_json_report(
-        report
+    print(
+        json.dumps(
+            report,
+            indent=4,
+            ensure_ascii=False
+        )
     )

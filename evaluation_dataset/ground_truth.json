@@ -1,0 +1,53 @@
+{
+  "_metadata": {
+    "description": "Human-curated ground truth findings for evaluation. Analyzer outputs must never be treated as ground truth.",
+    "version": "1.0",
+    "note": "Labels are manually curated for sample files and must be reviewed independently before final academic experiments."
+  },
+  "samples/bad_code.py": [
+    {
+      "id": "GT-BAD-001",
+      "category": "security",
+      "line": 4,
+      "severity": "high",
+      "description": "Hardcoded password assigned to variable"
+    },
+    {
+      "id": "GT-BAD-002",
+      "category": "quality_style",
+      "line": 7,
+      "severity": "low",
+      "description": "Unused local variable assigned but never read"
+    },
+    {
+      "id": "GT-BAD-003",
+      "category": "maintainability",
+      "line": 9,
+      "severity": "medium",
+      "description": "Deeply nested if statements should be combined or simplified"
+    },
+    {
+      "id": "GT-BAD-004",
+      "category": "quality_style",
+      "line": 1,
+      "severity": "low",
+      "description": "Unused import os"
+    },
+    {
+      "id": "GT-BAD-005",
+      "category": "quality_style",
+      "line": 2,
+      "severity": "low",
+      "description": "Unused import sys"
+    }
+  ],
+  "samples/test_code.py": [
+    {
+      "id": "GT-TEST-001",
+      "category": "quality_style",
+      "line": 1,
+      "severity": "low",
+      "description": "Unused import math"
+    }
+  ]
+}

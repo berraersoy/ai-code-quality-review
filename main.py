@@ -1,13 +1,22 @@
 import argparse
 import json
-import os
 
 from analyzer.static_analyzer import analyze_file
 from analyzer.llm_analyzer import analyze_with_llm
 from analyzer.hybrid_analyzer import run_hybrid_analysis
 
-def save_report(report, output_file):
-    with open(output_file, "w", encoding="utf-8") as file:
+
+def save_report(
+    report,
+    output_file
+):
+
+    with open(
+        output_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         json.dump(
             report,
             file,
@@ -16,49 +25,13 @@ def save_report(report, output_file):
         )
 
 
-def print_header():
-    print("\n" + "=" * 60)
-    print("AI-ASSISTED CODE QUALITY REVIEW")
-    print("=" * 60)
-
-
-def print_summary(report):
-    print_header()
-
-    print(f"\nFile: {report['file']}")
-    print(f"Analysis mode: {report['analysis_mode']}")
-
-    summary = report["summary"]
-
-    print("\nRESULTS")
-    print("-" * 30)
-
-    print(
-        f"Static findings: "
-        f"{summary['static_raw_findings']}"
-    )
-
-    print(
-        f"LLM findings: "
-        f"{summary['llm_raw_findings']}"
-    )
-
-    print(
-        f"Hybrid confirmed: "
-        f"{summary['hybrid_confirmed']}"
-    )
-
-    print(
-        f"Unique findings: "
-        f"{summary['unique_findings']}"
-    )
-
-    print("\n" + "=" * 60)
-
-
 def main():
+
     parser = argparse.ArgumentParser(
-        description="AI-Assisted Code Quality Review Tool"
+        description=(
+            "AI-Assisted Python "
+            "Code Quality Review Tool"
+        )
     )
 
     parser.add_argument(
@@ -68,56 +41,95 @@ def main():
 
     parser.add_argument(
         "--mode",
-        choices=["static", "llm", "hybrid"],
+        choices=[
+            "static",
+            "llm",
+            "hybrid"
+        ],
         default="hybrid",
-        help="Analysis mode (default: hybrid)"
+        help="Analysis mode"
+    )
+
+    parser.add_argument(
+        "--provider",
+        choices=[
+            "mock",
+            "gemini"
+        ],
+        default="mock",
+        help="LLM provider"
     )
 
     parser.add_argument(
         "--output",
-        default="final_report.json",
+        default=None,
         help="Output JSON file"
     )
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.file):
-        print(f"Error: File not found: {args.file}")
-        return
-
-    if not args.file.endswith(".py"):
-        print("Error: Only Python files are currently supported.")
-        return
-
     if args.mode == "static":
-        report = analyze_file(args.file)
 
-        # Give every mode a common identifier.
-        report["analysis_mode"] = "static"
+        report = analyze_file(
+            args.file
+        )
+
+        default_output = (
+            "report.json"
+        )
 
     elif args.mode == "llm":
-        report = analyze_with_llm(args.file)
+
+        report = analyze_with_llm(
+            args.file,
+            provider=args.provider
+        )
+
+        default_output = (
+            "llm_report.json"
+        )
 
     else:
-        report = run_hybrid_analysis(args.file)
+
+        report = run_hybrid_analysis(
+            args.file,
+            provider=args.provider
+        )
+
+        default_output = (
+            "final_report.json"
+        )
+
+    output_file = (
+        args.output
+        if args.output
+        else default_output
+    )
 
     save_report(
         report,
-        args.output
+        output_file
     )
 
-    if args.mode == "hybrid":
-        print_summary(report)
-
-    else:
-        print_header()
-        print(f"\nFile: {args.file}")
-        print(f"Analysis mode: {args.mode}")
+    print(
+        json.dumps(
+            report,
+            indent=4,
+            ensure_ascii=False
+        )
+    )
 
     print(
-        f"\nReport saved to: {args.output}"
+        f"\nReport saved to: "
+        f"{output_file}"
     )
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    try:
+        main()
+    except (RuntimeError, ValueError, FileNotFoundError) as error:
+        print(f"\n[ERROR] {error}", file=sys.stderr)
+        sys.exit(1)

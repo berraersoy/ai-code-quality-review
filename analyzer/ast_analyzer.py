@@ -2,9 +2,7 @@ import ast
 
 
 def analyze_ast(file_path):
-    """
-    Analyze the structural properties of a Python file using AST.
-    """
+    """Analyze the structural properties of a Python file."""
 
     with open(file_path, "r", encoding="utf-8") as file:
         code = file.read()
@@ -29,7 +27,10 @@ def analyze_ast(file_path):
 
     for node in ast.walk(tree):
 
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
             functions.append({
                 "name": node.name,
                 "line": node.lineno,
@@ -40,6 +41,7 @@ def analyze_ast(file_path):
             })
 
         elif isinstance(node, ast.ClassDef):
+
             classes.append({
                 "name": node.name,
                 "line": node.lineno
@@ -54,7 +56,10 @@ def analyze_ast(file_path):
         elif isinstance(node, ast.While):
             while_count += 1
 
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        elif isinstance(
+            node,
+            (ast.Import, ast.ImportFrom)
+        ):
             import_count += 1
 
         elif isinstance(node, ast.Return):
@@ -80,5 +85,9 @@ def analyze_ast(file_path):
 
 
 if __name__ == "__main__":
-    result = analyze_ast("samples/bad_code.py")
+
+    result = analyze_ast(
+        "samples/bad_code.py"
+    )
+
     print(result)

@@ -1,13 +1,10 @@
 import json
+
 from difflib import SequenceMatcher
 
 from analyzer.static_analyzer import analyze_file
 from analyzer.llm_analyzer import analyze_with_llm
 
-
-# ============================================================
-# MATCHING CONFIGURATION
-# ============================================================
 
 MATCH_THRESHOLD = 0.55
 MIN_MESSAGE_SIMILARITY = 0.20
@@ -16,10 +13,6 @@ CATEGORY_WEIGHT = 0.35
 LINE_WEIGHT = 0.30
 MESSAGE_WEIGHT = 0.35
 
-
-# ============================================================
-# CATEGORY NORMALIZATION
-# ============================================================
 
 CATEGORY_GROUPS = {
     "security": {
@@ -43,94 +36,133 @@ CATEGORY_GROUPS = {
 }
 
 
+SEVERITY_ORDER = {
+    "low": 1,
+    "medium": 2,
+    "high": 3
+}
+
+
+# ============================================================
+# NORMALIZATION
+# ============================================================
+
 def normalize_category(category):
-    """
-    Convert different category names into a common category.
-    """
 
     if not category:
-        return "unknown"
+        return ""
 
-    category = category.lower().strip()
+    category = (
+        str(category)
+        .strip()
+        .lower()
+    )
 
-    for normalized_category, aliases in CATEGORY_GROUPS.items():
+    for normalized, values in (
+        CATEGORY_GROUPS.items()
+    ):
 
-        if category in aliases:
-            return normalized_category
+        if category in values:
+            return normalized
 
     return category
 
 
+def normalize_severity(severity):
+
+    if not severity:
+        return "low"
+
+    severity = (
+        str(severity)
+        .strip()
+        .lower()
+    )
+
+    if severity in {
+        "warning",
+        "info"
+    }:
+        return "low"
+
+    if severity == "critical":
+        return "high"
+
+    if severity in {
+        "low",
+        "medium",
+        "high"
+    }:
+        return severity
+
+    return "low"
+
+
 # ============================================================
-# CATEGORY SIMILARITY
+# SIMILARITY
 # ============================================================
 
-def calculate_category_similarity(
+def category_similarity(
     static_category,
     llm_category
 ):
-    """
-    Compare normalized categories.
 
-    Returns:
-        1.0 -> same normalized category
-        0.5 -> related category
-        0.0 -> unrelated category
-    """
-
-    static_normalized = normalize_category(
-        static_category
+    static_normalized = (
+        normalize_category(
+            static_category
+        )
     )
 
-    llm_normalized = normalize_category(
-        llm_category
+    llm_normalized = (
+        normalize_category(
+            llm_category
+        )
     )
-
-    if static_normalized == llm_normalized:
-        return 1.0
-
-    related_pairs = {
-        ("maintainability", "complexity"),
-        ("complexity", "maintainability")
-    }
 
     if (
+        static_normalized
+        == llm_normalized
+    ):
+        return 1.0
+
+    related = {
+        frozenset({
+            "maintainability",
+            "complexity"
+        })
+    }
+
+    pair = frozenset({
         static_normalized,
         llm_normalized
-    ) in related_pairs:
+    })
+
+    if pair in related:
         return 0.5
 
     return 0.0
 
 
-# ============================================================
-# LINE SIMILARITY
-# ============================================================
-
-def calculate_line_similarity(
+def line_similarity(
     static_line,
     llm_line
 ):
-    """
-    Compare source-code locations.
 
-    Same line     -> 1.0
-    1 line apart  -> 0.8
-    2 lines apart -> 0.6
-    3 lines apart -> 0.4
-    farther       -> 0.0
-    """
-
-    if static_line is None or llm_line is None:
-        return 0.0
-
-    try:
-        difference = abs(
-            int(static_line) - int(llm_line)
+    if (
+        not isinstance(
+            static_line,
+            int
         )
-
-    except (TypeError, ValueError):
+        or not isinstance(
+            llm_line,
+            int
+        )
+    ):
         return 0.0
+
+    difference = abs(
+        static_line - llm_line
+    )
 
     if difference == 0:
         return 1.0
@@ -147,542 +179,443 @@ def calculate_line_similarity(
     return 0.0
 
 
-# ============================================================
-# MESSAGE SIMILARITY
-# ============================================================
-
-def normalize_text(text):
-    """
-    Normalize text before comparison.
-    """
-
-    if not text:
-        return ""
-
-    return str(text).lower().strip()
-
-
-def calculate_message_similarity(
+def message_similarity(
     static_message,
     llm_message
 ):
-    """
-    Calculate textual similarity between two issue messages.
-    """
 
-    static_text = normalize_text(
-        static_message
-    )
-
-    llm_text = normalize_text(
-        llm_message
-    )
-
-    if not static_text or not llm_text:
+    if (
+        not static_message
+        or not llm_message
+    ):
         return 0.0
 
     return SequenceMatcher(
         None,
-        static_text,
-        llm_text
+        str(static_message).lower(),
+        str(llm_message).lower()
     ).ratio()
 
 
 # ============================================================
-# MATCH SCORE
+# MATCHING SCORE
 # ============================================================
 
-def calculate_match_score(
+def calculate_match_details(
     static_finding,
     llm_finding
 ):
-    """
-    Calculate the weighted similarity score between
-    a static-analysis finding and an LLM finding.
-    """
 
-    category_similarity = (
-        calculate_category_similarity(
-            static_finding.get("category"),
-            llm_finding.get("category")
+    category_score = (
+        category_similarity(
+            static_finding.get(
+                "category"
+            ),
+            llm_finding.get(
+                "category"
+            )
         )
     )
 
-    line_similarity = (
-        calculate_line_similarity(
-            static_finding.get("line"),
-            llm_finding.get("line")
+    line_score = (
+        line_similarity(
+            static_finding.get(
+                "line"
+            ),
+            llm_finding.get(
+                "line"
+            )
         )
     )
 
-    message_similarity = (
-        calculate_message_similarity(
-            static_finding.get("message"),
-            llm_finding.get("message")
+    message_score = (
+        message_similarity(
+            static_finding.get(
+                "message"
+            ),
+            llm_finding.get(
+                "message"
+            )
         )
     )
 
     score = (
-        category_similarity * CATEGORY_WEIGHT
-        + line_similarity * LINE_WEIGHT
-        + message_similarity * MESSAGE_WEIGHT
+        CATEGORY_WEIGHT
+        * category_score
+
+        + LINE_WEIGHT
+        * line_score
+
+        + MESSAGE_WEIGHT
+        * message_score
     )
 
-    details = {
-        "category_similarity": round(
-            category_similarity,
-            3
-        ),
-
-        "line_similarity": round(
-            line_similarity,
-            3
-        ),
-
-        "message_similarity": round(
-            message_similarity,
-            3
-        )
+    return {
+        "score": score,
+        "category_similarity": category_score,
+        "line_similarity": line_score,
+        "message_similarity": message_score
     }
 
-    return round(score, 3), details
 
+def is_valid_match(details):
 
-# ============================================================
-# MATCH VALIDATION
-# ============================================================
+    return (
+        details["score"]
+        >= MATCH_THRESHOLD
 
-def is_valid_match(
-    score,
-    match_details
-):
-    """
-    Decide whether a possible match should be accepted.
+        and
 
-    A high weighted score alone is not enough.
-
-    The textual descriptions must also have a minimum
-    similarity. This reduces false hybrid confirmations.
-    """
-
-    if score < MATCH_THRESHOLD:
-        return False
-
-    message_similarity = match_details.get(
-        "message_similarity",
-        0.0
-    )
-
-    if (
-        message_similarity
-        < MIN_MESSAGE_SIMILARITY
-    ):
-        return False
-
-    return True
-
-
-# ============================================================
-# SEVERITY NORMALIZATION
-# ============================================================
-
-def normalize_severity(severity):
-    """
-    Normalize severity labels from different analyzers.
-    """
-
-    if not severity:
-        return "low"
-
-    severity = str(
-        severity
-    ).lower()
-
-    mapping = {
-        "warning": "low",
-        "info": "low",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "critical": "high"
-    }
-
-    return mapping.get(
-        severity,
-        "low"
+        details["message_similarity"]
+        >= MIN_MESSAGE_SIMILARITY
     )
 
 
-def severity_rank(severity):
-    """
-    Convert severity into numeric ranking.
-    """
-
-    severity = normalize_severity(
-        severity
-    )
-
-    ranks = {
-        "low": 1,
-        "medium": 2,
-        "high": 3
-    }
-
-    return ranks.get(
-        severity,
-        1
-    )
-
+# ============================================================
+# SEVERITY
+# ============================================================
 
 def merge_severity(
     static_severity,
     llm_severity
 ):
-    """
-    Use the higher severity when two analyzers
-    confirm the same issue.
-    """
 
-    static_normalized = normalize_severity(
-        static_severity
+    static_normalized = (
+        normalize_severity(
+            static_severity
+        )
     )
 
-    llm_normalized = normalize_severity(
-        llm_severity
+    llm_normalized = (
+        normalize_severity(
+            llm_severity
+        )
     )
 
     if (
-        severity_rank(llm_normalized)
-        > severity_rank(static_normalized)
+        SEVERITY_ORDER[
+            static_normalized
+        ]
+        >=
+        SEVERITY_ORDER[
+            llm_normalized
+        ]
     ):
-        return llm_normalized
+        return static_normalized
 
-    return static_normalized
+    return llm_normalized
 
 
 # ============================================================
-# CREATE HYBRID FINDING
+# MERGE
 # ============================================================
 
 def create_hybrid_finding(
     static_finding,
     llm_finding,
-    match_score,
-    match_details
+    details
 ):
-    """
-    Merge matching static and LLM findings.
-    """
-
-    final_category = normalize_category(
-        llm_finding.get(
-            "category",
-            static_finding.get("category")
-        )
-    )
-
-    final_severity = merge_severity(
-        static_finding.get("severity"),
-        llm_finding.get("severity")
-    )
 
     return {
         "source": "hybrid",
 
-        "category": final_category,
-
-        "line": static_finding.get(
-            "line"
+        "category": (
+            llm_finding.get(
+                "category"
+            )
+            or static_finding.get(
+                "category"
+            )
         ),
 
-        "severity": final_severity,
-
-        "static_tool": static_finding.get(
-            "tool"
+        "line": (
+            static_finding.get(
+                "line"
+            )
         ),
 
-        "static_code": static_finding.get(
-            "code"
+        "severity": merge_severity(
+            static_finding.get(
+                "severity"
+            ),
+            llm_finding.get(
+                "severity"
+            )
         ),
 
-        "llm_code": llm_finding.get(
-            "code"
+        "static_tool": (
+            static_finding.get(
+                "tool"
+            )
         ),
 
-        "message": static_finding.get(
-            "message"
+        "static_code": (
+            static_finding.get(
+                "code"
+            )
         ),
 
-        "llm_explanation": llm_finding.get(
-            "explanation"
+        "llm_code": (
+            llm_finding.get(
+                "code"
+            )
         ),
 
-        "suggested_fix": llm_finding.get(
-            "suggested_fix"
+        "message": (
+            static_finding.get(
+                "message"
+            )
+        ),
+
+        "llm_explanation": (
+            llm_finding.get(
+                "explanation"
+            )
+        ),
+
+        "suggested_fix": (
+            llm_finding.get(
+                "suggested_fix"
+            )
         ),
 
         "confirmed_by": [
-            static_finding.get("tool"),
+            static_finding.get(
+                "tool"
+            ),
             "llm"
         ],
 
-        "match_score": match_score,
+        "match_score": round(
+            details["score"],
+            3
+        ),
 
-        "match_details": match_details
+        "match_details": {
+            "category_similarity": round(
+                details[
+                    "category_similarity"
+                ],
+                3
+            ),
+
+            "line_similarity": round(
+                details[
+                    "line_similarity"
+                ],
+                3
+            ),
+
+            "message_similarity": round(
+                details[
+                    "message_similarity"
+                ],
+                3
+            )
+        }
     }
 
 
 # ============================================================
-# UNMATCHED FINDINGS
+# MATCH FINDINGS
 # ============================================================
 
-def create_static_finding(finding):
-    """
-    Create an unmatched static-only finding.
-    """
-
-    result = finding.copy()
-
-    result["source"] = "static"
-
-    return result
-
-
-def create_llm_finding(finding):
-    """
-    Create an unmatched LLM-only finding.
-    """
-
-    result = finding.copy()
-
-    result["source"] = "llm"
-
-    return result
-
-
-# ============================================================
-# FIND BEST VALID LLM MATCH
-# ============================================================
-
-def find_best_llm_match(
-    static_finding,
-    llm_findings,
-    used_llm_indexes
+def merge_findings(
+    static_findings,
+    llm_findings
 ):
-    """
-    Find the strongest VALID LLM match for one
-    static-analysis finding.
 
-    Invalid candidates are ignored even if their
-    weighted score is relatively high.
-    """
-
-    best_index = None
-    best_score = 0.0
-    best_details = None
-
-    for index, llm_finding in enumerate(
-        llm_findings
-    ):
-
-        if index in used_llm_indexes:
-            continue
-
-        score, details = calculate_match_score(
-            static_finding,
-            llm_finding
-        )
-
-        if not is_valid_match(
-            score,
-            details
-        ):
-            continue
-
-        if score > best_score:
-
-            best_index = index
-            best_score = score
-            best_details = details
-
-    return (
-        best_index,
-        best_score,
-        best_details
-    )
-
-
-# ============================================================
-# HYBRID ANALYSIS ENGINE
-# ============================================================
-
-def run_hybrid_analysis(file_path):
-    """
-    Run static analysis and LLM analysis,
-    then intelligently merge matching findings.
-    """
-
-    # --------------------------------------------------------
-    # STATIC ANALYSIS
-    # --------------------------------------------------------
-
-    static_report = analyze_file(
-        file_path
-    )
-
-    static_findings = static_report.get(
-        "findings",
-        []
-    )
-
-    # --------------------------------------------------------
-    # LLM ANALYSIS
-    # --------------------------------------------------------
-
-    llm_report = analyze_with_llm(
-        file_path
-    )
-
-    llm_findings = llm_report.get(
-        "findings",
-        []
-    )
-
-    # --------------------------------------------------------
-    # MATCHING
-    # --------------------------------------------------------
-
-    final_findings = []
+    merged_findings = []
 
     used_llm_indexes = set()
 
-    hybrid_confirmed = 0
+    for static_finding in (
+        static_findings
+    ):
 
-    for static_finding in static_findings:
+        best_index = None
+        best_details = None
 
-        (
-            best_index,
-            best_score,
-            best_details
-        ) = find_best_llm_match(
-            static_finding,
-            llm_findings,
-            used_llm_indexes
-        )
+        for index, llm_finding in (
+            enumerate(llm_findings)
+        ):
 
-        # ----------------------------------------------------
-        # HYBRID MATCH
-        # ----------------------------------------------------
+            if index in used_llm_indexes:
+                continue
 
-        if best_index is not None:
-
-            llm_finding = llm_findings[
-                best_index
-            ]
-
-            hybrid_finding = (
-                create_hybrid_finding(
+            details = (
+                calculate_match_details(
                     static_finding,
-                    llm_finding,
-                    best_score,
-                    best_details
+                    llm_finding
                 )
             )
 
-            final_findings.append(
-                hybrid_finding
+            if not is_valid_match(
+                details
+            ):
+                continue
+
+            if (
+                best_details is None
+                or details["score"]
+                > best_details["score"]
+            ):
+                best_index = index
+                best_details = details
+
+        if best_index is not None:
+
+            llm_finding = (
+                llm_findings[
+                    best_index
+                ]
+            )
+
+            merged_findings.append(
+                create_hybrid_finding(
+                    static_finding,
+                    llm_finding,
+                    best_details
+                )
             )
 
             used_llm_indexes.add(
                 best_index
             )
 
-            hybrid_confirmed += 1
-
-        # ----------------------------------------------------
-        # STATIC-ONLY FINDING
-        # ----------------------------------------------------
-
         else:
 
-            final_findings.append(
-                create_static_finding(
-                    static_finding
-                )
+            finding = dict(
+                static_finding
             )
 
-    # --------------------------------------------------------
-    # UNMATCHED LLM FINDINGS
-    # --------------------------------------------------------
+            finding["source"] = (
+                "static"
+            )
 
-    for index, llm_finding in enumerate(
-        llm_findings
+            merged_findings.append(
+                finding
+            )
+
+    for index, llm_finding in (
+        enumerate(llm_findings)
     ):
 
-        if index not in used_llm_indexes:
+        if index in used_llm_indexes:
+            continue
 
-            final_findings.append(
-                create_llm_finding(
-                    llm_finding
-                )
-            )
+        finding = dict(
+            llm_finding
+        )
 
-    # --------------------------------------------------------
-    # FINAL REPORT
-    # --------------------------------------------------------
+        finding["source"] = "llm"
 
-    report = {
+        merged_findings.append(
+            finding
+        )
+
+    return merged_findings
+
+
+# ============================================================
+# HYBRID ANALYSIS
+# ============================================================
+
+def run_hybrid_analysis(
+    file_path,
+    provider="mock"
+):
+
+    static_report = analyze_file(
+        file_path
+    )
+
+    llm_report = analyze_with_llm(
+        file_path,
+        provider=provider
+    )
+
+    static_findings = (
+        static_report.get(
+            "findings",
+            []
+        )
+    )
+
+    llm_findings = (
+        llm_report.get(
+            "findings",
+            []
+        )
+    )
+
+    findings = merge_findings(
+        static_findings,
+        llm_findings
+    )
+
+    hybrid_confirmed = sum(
+        1
+        for finding in findings
+        if finding.get(
+            "source"
+        ) == "hybrid"
+    )
+
+    return {
         "file": file_path,
 
         "analysis_mode": "hybrid",
 
+        "llm_provider": provider,
+
+        "llm_model": llm_report.get(
+            "model"
+        ),
+
         "summary": {
-            "static_raw_findings": len(
-                static_findings
+            "static_raw_findings": (
+                len(static_findings)
             ),
 
-            "llm_raw_findings": len(
-                llm_findings
+            "llm_raw_findings": (
+                len(llm_findings)
             ),
 
             "hybrid_confirmed": (
                 hybrid_confirmed
             ),
 
-            "unique_findings": len(
-                final_findings
+            "unique_findings": (
+                len(findings)
             )
         },
 
-        # Structural information
-        "ast_analysis": static_report.get(
-            "ast_analysis"
+        "ast_analysis": (
+            static_report.get(
+                "ast_analysis"
+            )
         ),
 
-        # Measurements such as cyclomatic complexity
-        "metrics": static_report.get(
-            "metrics",
-            {}
+        "metrics": (
+            static_report.get(
+                "metrics",
+                {}
+            )
         ),
 
-        # Actual issues
-        "findings": final_findings
+        "findings": findings
     }
-
-    return report
 
 
 # ============================================================
-# SAVE REPORT
+# SAVE
 # ============================================================
 
 def save_hybrid_report(
     report,
     output_file="hybrid_report.json"
 ):
-    """
-    Save hybrid report as JSON.
-    """
 
     with open(
         output_file,
@@ -697,98 +630,41 @@ def save_hybrid_report(
             ensure_ascii=False
         )
 
-    print(
-        f"\nHybrid report saved to: {output_file}"
-    )
-
-
-# ============================================================
-# TERMINAL SUMMARY
-# ============================================================
-
-def print_hybrid_summary(report):
-    """
-    Print hybrid-analysis summary.
-    """
-
-    summary = report.get(
-        "summary",
-        {}
-    )
-
-    print("\n" + "=" * 60)
-    print("HYBRID CODE QUALITY REVIEW")
-    print("=" * 60)
-
-    print(
-        f"\nFile: {report.get('file')}"
-    )
-
-    print(
-        f"Static raw findings: "
-        f"{summary.get('static_raw_findings', 0)}"
-    )
-
-    print(
-        f"LLM raw findings: "
-        f"{summary.get('llm_raw_findings', 0)}"
-    )
-
-    print(
-        f"Hybrid confirmed: "
-        f"{summary.get('hybrid_confirmed', 0)}"
-    )
-
-    print(
-        f"Unique findings: "
-        f"{summary.get('unique_findings', 0)}"
-    )
-
-    print("\nCOMPLEXITY METRICS")
-    print("-" * 60)
-
-    complexity_metrics = (
-        report
-        .get("metrics", {})
-        .get("complexity", [])
-    )
-
-    if not complexity_metrics:
-
-        print(
-            "No complexity metrics found."
-        )
-
-    else:
-
-        for metric in complexity_metrics:
-
-            print(
-                f"{metric.get('function')} "
-                f"| Line {metric.get('line')} "
-                f"| CC: {metric.get('complexity')} "
-                f"| Rank: {metric.get('rank')}"
-            )
-
-    print("\n" + "=" * 60)
-
-
-# ============================================================
-# DIRECT EXECUTION
-# ============================================================
 
 if __name__ == "__main__":
+    import argparse
 
-    file_path = "samples/bad_code.py"
-
-    report = run_hybrid_analysis(
-        file_path
+    parser = argparse.ArgumentParser(
+        description="Hybrid Static + LLM Code Quality Analyzer"
+    )
+    parser.add_argument(
+        "file",
+        nargs="?",
+        default="samples/bad_code.py",
+        help="Python file to analyze"
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["mock", "gemini"],
+        default="mock",
+        help="LLM provider"
     )
 
-    print_hybrid_summary(
-        report
+    args = parser.parse_args()
+
+    report = run_hybrid_analysis(
+        args.file,
+        provider=args.provider
     )
 
     save_hybrid_report(
         report
+    )
+
+    print(
+        json.dumps(
+            report,
+            indent=4,
+            ensure_ascii=False
+        )
     )
