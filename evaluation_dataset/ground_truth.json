@@ -49,5 +49,31 @@
       "severity": "low",
       "description": "Unused import math"
     }
-  ]
+  ],
+  "samples/security_issues.py": [
+    {
+      "id": "GT-SEC-001",
+      "category": "security",
+      "line": 4,
+      "severity": "high",
+      "description": "Hardcoded password is stored directly in source code."
+    },
+    {
+      "id": "GT-SEC-002",
+      "category": "security",
+      "line": 7,
+      "severity": "medium",
+      "description": "run_user_command passes its caller-provided command to a shell, allowing shell metacharacters in untrusted input to be interpreted."
+    }
+  ],
+  "samples/complex_logic.py": [
+    {
+      "id": "GT-COMPLEX-001",
+      "category": "complexity",
+      "line": 1,
+      "severity": "low",
+      "description": "calculate_discount has five independent conditional branches, giving it cyclomatic complexity above the configured finding threshold."
+    }
+  ],
+  "samples/clean_control.py": []
 }

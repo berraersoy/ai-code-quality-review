@@ -13,7 +13,8 @@ VALID_CATEGORIES = {
     "security",
     "quality_style",
     "performance",
-    "maintainability"
+    "maintainability",
+    "complexity"
 }
 
 VALID_SEVERITIES = {
@@ -75,6 +76,13 @@ Look for genuine problems related to:
 - maintainability
 - performance
 - code quality and style
+- measurable control-flow complexity
+
+Report complexity only when concrete branching or control-flow paths are
+measurably high, such as many if/elif branches, loops, boolean conditions, or
+match/case branches in one function. Explain the observable branching evidence.
+Do not report subjective style preferences, function length alone, or code as
+complex merely because it looks difficult to read.
 
 Rules:
 
@@ -94,6 +102,7 @@ security
 quality_style
 performance
 maintainability
+complexity
 
 Allowed severities:
 
