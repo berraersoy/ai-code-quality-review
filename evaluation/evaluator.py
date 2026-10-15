@@ -20,8 +20,21 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from analyzer.hybrid_analyzer import run_hybrid_analysis
 from analyzer.llm_analyzer import analyze_with_llm
 from analyzer.static_analyzer import analyze_file
-from evaluation.ground_truth import get_ground_truth_for_file, load_ground_truth
-from evaluation.metrics import aggregate_metrics, calculate_metrics, format_metrics
+from evaluation.ground_truth import (
+    VALID_CATEGORIES,
+    get_ground_truth_for_file,
+    load_ground_truth,
+)
+from evaluation.metrics import (
+    aggregate_category_metrics,
+    aggregate_metrics,
+    calculate_category_metrics,
+    calculate_metrics,
+    format_metrics,
+)
+
+
+CATEGORY_ORDER = tuple(sorted(VALID_CATEGORIES))
 
 
 # ============================================================
@@ -309,6 +322,12 @@ def evaluate_findings(
         "total_predictions": len(predictions),
         "total_ground_truth": len(ground_truth),
         "metrics": match_result["metrics"],
+        "category_metrics": calculate_category_metrics(
+            match_result["matches"],
+            match_result["false_positives"],
+            match_result["false_negatives"],
+            CATEGORY_ORDER,
+        ),
         "matches": match_result["matches"],
         "false_positives": match_result["false_positives"],
         "false_negatives": match_result["false_negatives"]
@@ -443,11 +462,20 @@ def evaluate_dataset(
         )
 
     # Micro-average: sum raw TP, FP, FN first!
-    aggregate = {
-        "static": aggregate_metrics(static_metrics_list),
-        "llm": aggregate_metrics(llm_metrics_list),
-        "hybrid": aggregate_metrics(hybrid_metrics_list),
-    }
+    aggregate = {}
+    for mode, metrics_list in (
+        ("static", static_metrics_list),
+        ("llm", llm_metrics_list),
+        ("hybrid", hybrid_metrics_list),
+    ):
+        aggregate[mode] = aggregate_metrics(metrics_list)
+        aggregate[mode]["category_metrics"] = aggregate_category_metrics(
+            [
+                file_comparison["results"][mode]["category_metrics"]
+                for file_comparison in per_file.values()
+            ],
+            CATEGORY_ORDER,
+        )
 
     return {
         "files_evaluated": len(file_paths),
@@ -460,6 +488,27 @@ def evaluate_dataset(
 # ============================================================
 # CLI PRESENTATION HELPERS
 # ============================================================
+
+def format_category_summary_table(
+    category_metrics: Dict[str, Dict[str, Any]],
+    mode: str = ""
+) -> str:
+    """Format category-level metrics for console display."""
+    lines = [
+        "\nCategory-level metrics",
+        f"{'Mode':<10} | {'Category':<18} | {'TP':<4} | {'FP':<4} | {'FN':<4} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}",
+        "-" * 100,
+    ]
+
+    for category, metrics in category_metrics.items():
+        lines.append(
+            f"{mode:<10} | {category:<18} | {metrics['tp']:<4} | {metrics['fp']:<4} | "
+            f"{metrics['fn']:<4} | {metrics['precision']:<10.4f} | "
+            f"{metrics['recall']:<10.4f} | {metrics['f1']:<10.4f}"
+        )
+
+    return "\n".join(lines)
+
 
 def format_summary_table(comparison_or_aggregate: Dict[str, Any]) -> str:
     """Format evaluation comparison table for console display."""
@@ -484,6 +533,25 @@ def format_summary_table(comparison_or_aggregate: Dict[str, Any]) -> str:
         lines.append(
             f"{mode:<10} | {tp:<4} | {fp:<4} | {fn:<4} | {p:<10.4f} | {r:<10.4f} | {f1:<10.4f}"
         )
+
+    if any(
+        results.get(mode, {}).get("category_metrics")
+        for mode in ("static", "llm", "hybrid")
+    ):
+        lines.extend([
+            "",
+            "Category-level metrics",
+            f"{'Mode':<10} | {'Category':<18} | {'TP':<4} | {'FP':<4} | {'FN':<4} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}",
+            "-" * 100,
+        ])
+        for mode in ("static", "llm", "hybrid"):
+            mode_data = results.get(mode, {})
+            for category, metrics in mode_data.get("category_metrics", {}).items():
+                lines.append(
+                    f"{mode:<10} | {category:<18} | {metrics['tp']:<4} | {metrics['fp']:<4} | "
+                    f"{metrics['fn']:<4} | {metrics['precision']:<10.4f} | "
+                    f"{metrics['recall']:<10.4f} | {metrics['f1']:<10.4f}"
+                )
 
     lines.append("")
     return "\n".join(lines)
@@ -568,6 +636,7 @@ def main():
                 f"TP: {m['tp']} | FP: {m['fp']} | FN: {m['fn']} | "
                 f"Precision: {m['precision']:.4f} | Recall: {m['recall']:.4f} | F1: {m['f1']:.4f}"
             )
+            print(format_category_summary_table(report["category_metrics"]))
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

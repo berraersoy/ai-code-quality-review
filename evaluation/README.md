@@ -54,7 +54,33 @@ When calculating metrics across multiple source files:
 
 ---
 
-## 4. Comparing Static, LLM, and Hybrid Analysis
+## 4. Category-Level Metrics
+
+Each evaluation result also reports TP, FP, FN, Precision, Recall, and F1 separately for the supported categories: `security`, `quality_style`, `maintainability`, `complexity`, and `performance`.
+
+- A matched prediction is counted as a TP in the ground-truth item's category. This also applies when the existing category compatibility rules allow a cross-category match.
+- An unmatched prediction is counted as an FP in its predicted category.
+- An unmatched ground-truth item is counted as an FN in its labeled category.
+- Every supported category is included, including categories with no predictions or labels. Zero-denominator precision, recall, and F1 values are reported as `0.0`.
+- Dataset-level category metrics use micro-averaging: category TP, FP, and FN counts are summed across files before rates are calculated.
+- Findings with missing or unsupported categories remain in overall metrics but are omitted from the five supported category totals.
+
+The JSON evaluation report adds `category_metrics` beside the existing overall `metrics` for each file and alongside the overall metrics for each dataset mode. The CLI keeps its overall table and also prints a category-level table.
+
+## 5. Generating Visualizations
+
+The visualization command reads an existing evaluation JSON report and writes a standalone HTML dashboard. It uses only the Python standard library; no browser-side packages or new Python dependencies are required.
+
+Generate a full-dataset report with the deterministic mock provider, then render it:
+
+```bash
+python -m evaluation --all --provider mock --output mock_evaluation.json
+python -m evaluation.visualize mock_evaluation.json --output mock_evaluation.html
+```
+
+Open `mock_evaluation.html` in a browser to compare overall Precision, Recall, and F1 across Static, LLM, and Hybrid, and to compare category F1 for all five supported categories. The dashboard labels mock output as pipeline-only data, not real Gemini performance. Categories with no ground-truth examples and modes or metrics missing from an input report are shown as unavailable; calculated zero scores remain displayed as `0.000`.
+
+## 6. Comparing Static, LLM, and Hybrid Analysis
 
 Each file is independently reviewed under three modes:
 1. **Static Analysis**: Ruff (syntax, style, control flow) + Bandit (security) + Radon (complexity).
@@ -65,7 +91,7 @@ Each file is independently reviewed under three modes:
 
 ---
 
-## 5. Mock vs. Real Gemini Evaluation
+## 7. Mock vs. Real Gemini Evaluation
 
 - **Mock LLM Mode (`--provider mock`)**:
   - Intended solely for deterministic testing, CI/CD, and pipeline verification.

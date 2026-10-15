@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from analyzer.llm_analyzer import (
     analyze_with_llm,
+    build_review_prompt,
     is_temporary_error,
     run_gemini_llm,
     validate_finding,
@@ -43,6 +44,34 @@ def test_validate_finding_rejects_missing_field():
 def test_validate_finding_rejects_invalid_category():
     finding = _make_valid_finding(category="unknown_category")
     assert validate_finding(finding, total_lines=14) is False
+
+
+def test_validate_finding_accepts_complexity_category():
+    finding = _make_valid_finding(
+        category="complexity",
+        code="LLM-COMPLEXITY-001",
+        message="The function has many independent branches.",
+        explanation="The nested conditions create multiple control-flow paths.",
+        suggested_fix="Extract the branches into smaller decision-focused helpers.",
+    )
+    assert validate_finding(finding, total_lines=14) is True
+    assert finding["category"] == "complexity"
+
+
+@pytest.mark.parametrize(
+    "category",
+    ["security", "quality_style", "maintainability", "performance"],
+)
+def test_validate_finding_keeps_existing_categories(category):
+    finding = _make_valid_finding(category=category)
+    assert validate_finding(finding, total_lines=14) is True
+
+
+def test_complexity_prompt_requires_measurable_control_flow_evidence():
+    prompt = build_review_prompt("def example():\n    return 1")
+    assert "complexity" in prompt.lower()
+    assert "measurably high" in prompt
+    assert "subjective style preferences" in prompt
 
 
 def test_validate_finding_rejects_invalid_severity():

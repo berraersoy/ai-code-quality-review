@@ -15,6 +15,7 @@ from evaluation.ground_truth import (
     validate_ground_truth_item,
 )
 from evaluation.metrics import (
+    aggregate_category_metrics,
     aggregate_metrics,
     calculate_metrics,
     format_metrics,
@@ -136,6 +137,96 @@ def test_format_metrics_rounds_floats():
     assert formatted["precision"] == 0.33
     assert formatted["recall"] == 1.0
     assert formatted["f1"] == 0.5
+
+
+def test_category_metrics_count_tp_fp_fn_and_calculate_rates():
+    ground_truth = [
+        _make_gt(id_="GT-SEC", category="security", line=4, desc="Hardcoded password"),
+        _make_gt(id_="GT-CPLX", category="complexity", line=8, desc="Cyclomatic complexity"),
+        _make_gt(id_="GT-MNT", category="maintainability", line=10, desc="Nested conditions"),
+    ]
+    predictions = [
+        _make_pred(category="security", line=4, message="Hardcoded password in source"),
+        _make_pred(category="complexity", line=8, message="Cyclomatic complexity is elevated"),
+        _make_pred(category="security", line=30, message="Unrelated security finding"),
+        _make_pred(category="performance", line=20, message="Repeated work in a loop"),
+    ]
+
+    result = evaluate_findings(predictions, ground_truth)
+    categories = result["category_metrics"]
+
+    security = categories["security"]
+    assert (security["tp"], security["fp"], security["fn"]) == (1, 1, 0)
+    assert security["precision"] == 0.5
+    assert security["recall"] == 1.0
+    assert security["f1"] == pytest.approx(2.0 / 3.0)
+
+    complexity = categories["complexity"]
+    assert (complexity["tp"], complexity["fp"], complexity["fn"]) == (1, 0, 0)
+    assert complexity["precision"] == complexity["recall"] == complexity["f1"] == 1.0
+
+    maintainability = categories["maintainability"]
+    assert (maintainability["tp"], maintainability["fp"], maintainability["fn"]) == (0, 0, 1)
+    assert maintainability["recall"] == maintainability["f1"] == 0.0
+
+    performance = categories["performance"]
+    assert (performance["tp"], performance["fp"], performance["fn"]) == (0, 1, 0)
+    assert performance["precision"] == performance["recall"] == performance["f1"] == 0.0
+
+
+def test_category_aggregation_uses_micro_averaging():
+    first_file = {"security": calculate_metrics(tp=1, fp=0, fn=0)}
+    second_file = {"security": calculate_metrics(tp=1, fp=9, fn=0)}
+
+    aggregate = aggregate_category_metrics(
+        [first_file, second_file],
+        categories=("security",),
+    )["security"]
+
+    assert aggregate["tp"] == 2
+    assert aggregate["fp"] == 9
+    assert aggregate["fn"] == 0
+    assert aggregate["precision"] == pytest.approx(2.0 / 11.0)
+    assert aggregate["recall"] == 1.0
+    assert aggregate["f1"] == pytest.approx(4.0 / 13.0)
+
+
+def test_category_metrics_include_empty_supported_categories_safely():
+    result = evaluate_findings(predictions=[], ground_truth=[])
+
+    assert set(result["category_metrics"]) == {
+        "security",
+        "quality_style",
+        "maintainability",
+        "complexity",
+        "performance",
+    }
+    for metrics in result["category_metrics"].values():
+        assert metrics == {
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+        }
+
+
+def test_category_metrics_preserve_existing_overall_report_shape():
+    result = evaluate_findings(
+        predictions=[_make_pred()],
+        ground_truth=[_make_gt()],
+    )
+
+    assert result["metrics"] == {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+    }
+    assert set(result["category_metrics"]["security"]) == set(result["metrics"])
 
 
 # ============================================================
@@ -294,3 +385,11 @@ def test_evaluate_dataset_offline():
         assert "precision" in agg_m
         assert "recall" in agg_m
         assert "f1" in agg_m
+        assert set(agg_m["category_metrics"]) == {
+            "security",
+            "quality_style",
+            "maintainability",
+            "complexity",
+            "performance",
+        }
+        assert "tp" in agg_m["category_metrics"]["security"]
